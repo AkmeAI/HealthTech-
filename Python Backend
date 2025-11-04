@@ -1,0 +1,455 @@
+# core/optimized_backend.py
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, field
+from enum import Enum
+import asyncio
+import time
+import numpy as np
+from concurrent.futures import ThreadPoolExecutor
+import redis.asyncio as redis
+from pydantic import BaseModel, validator
+import orjson
+from loguru import logger
+from contextvars import ContextVar
+import uvloop
+
+# Активация uvloop для лучшей производительности asyncio
+asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
+class HealthMetricType(Enum):
+    STEPS = "steps"
+    HEART_RATE = "heart_rate"
+    SLEEP = "sleep"
+    NUTRITION = "nutrition"
+    STRESS = "stress"
+    ACTIVITY = "activity"
+
+@dataclass(frozen=True, slots=True)
+class OptimizedHealthMetric:
+    """Оптимизированная структура для health данных"""
+    user_id: str
+    metric_type: HealthMetricType
+    value: float
+    timestamp: int
+    source: str
+    confidence: float = 1.0
+
+class HealthScore(BaseModel):
+    overall: float
+    physical: float
+    mental: float
+    nutritional: float
+    sleep: float
+    trend: float
+    
+    class Config:
+        frozen = True
+        json_loads = orjson.loads
+        json_dumps = orjson.dumps
+
+class OptimizedHealthProcessor:
+    """Высокопроизводительный процессор health данных"""
+    
+    __slots__ = ['_cache', '_batch_size', '_executor', '_redis_client', '_metrics_buffer']
+    
+    def __init__(self, redis_url: str, batch_size: int = 1000):
+        self._cache = {}
+        self._batch_size = batch_size
+        self._executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="health_processor")
+        self._redis_client = None
+        self._redis_url = redis_url
+        self._metrics_buffer = []
+        self._buffer_lock = asyncio.Lock()
+    
+    async def initialize(self):
+        """Асинхронная инициализация с connection pooling"""
+        self._redis_client = await redis.from_url(
+            self._redis_url, 
+            encoding="utf-8",
+            decode_responses=True,
+            max_connections=20
+        )
+        logger.info("OptimizedHealthProcessor initialized with connection pooling")
+    
+    async def process_health_batch(self, metrics: List[OptimizedHealthMetric]) -> Dict[str, HealthScore]:
+        """Обработка батча метрик с максимальной производительностью"""
+        start_time = time.perf_counter()
+        
+        if len(metrics) > self._batch_size:
+            result = await self._process_large_batch_optimized(metrics)
+        else:
+            result = await self._process_small_batch_optimized(metrics)
+        
+        processing_time = time.perf_counter() - start_time
+        logger.info(f"Processed {len(metrics)} metrics in {processing_time:.3f}s")
+        
+        return result
+    
+    async def _process_large_batch_optimized(self, metrics: List[OptimizedHealthMetric]) -> Dict[str, HealthScore]:
+        """Оптимизированная обработка больших батчей"""
+        # Разделение на чанки для параллельной обработки
+        chunk_size = max(100, len(metrics) // 16)  # Динамический размер чанка
+        chunks = [
+            metrics[i:i + chunk_size] 
+            for i in range(0, len(metrics), chunk_size)
+        ]
+        
+        # Параллельная обработка чанков
+        chunk_tasks = [
+            asyncio.create_task(self._process_small_batch_optimized(chunk))
+            for chunk in chunks
+        ]
+        
+        chunk_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
+        
+        # Объединение результатов
+        merged_results = {}
+        for result in chunk_results:
+            if isinstance(result, dict):
+                merged_results.update(result)
+        
+        return merged_results
+    
+    async def _process_small_batch_optimized(self, metrics: List[OptimizedHealthMetric]) -> Dict[str, HealthScore]:
+        """Оптимизированная обработка маленьких батчей"""
+        user_metrics = self._group_by_user_optimized(metrics)
+        
+        # Параллельный расчет скоринга для пользователей
+        tasks = [
+            self._calculate_user_score_optimized(user_id, user_metrics)
+            for user_id in user_metrics.keys()
+        ]
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return dict(zip(user_metrics.keys(), results))
+    
+    def _group_by_user_optimized(self, metrics: List[OptimizedHealthMetric]) -> Dict[str, List[OptimizedHealthMetric]]:
+        """Супер-быстрая группировка по пользователю"""
+        grouped = {}
+        for metric in metrics:
+            user_id = metric.user_id
+            if user_id not in grouped:
+                grouped[user_id] = []
+            grouped[user_id].append(metric)
+        return grouped
+    
+    async def _calculate_user_score_optimized(self, user_id: str, metrics: List[OptimizedHealthMetric]) -> HealthScore:
+        """Оптимизированный расчет health score с кэшированием"""
+        cache_key = f"health_score:{user_id}"
+        
+        # Попытка получить из кэша
+        cached = await self._redis_client.get(cache_key)
+        if cached:
+            try:
+                return HealthScore.parse_raw(cached)
+            except Exception:
+                pass  # Если кэш поврежден, пересчитываем
+        
+        # Параллельный расчет компонентов
+        tasks = [
+            self._executor.submit(self._calculate_physical_score_optimized, metrics),
+            self._executor.submit(self._calculate_mental_score_optimized, metrics),
+            self._executor.submit(self._calculate_nutrition_score_optimized, metrics),
+            self._executor.submit(self._calculate_sleep_score_optimized, metrics),
+        ]
+        
+        physical, mental, nutrition, sleep = await asyncio.gather(
+            asyncio.get_event_loop().run_in_executor(None, lambda: tasks[0].result()),
+            asyncio.get_event_loop().run_in_executor(None, lambda: tasks[1].result()),
+            asyncio.get_event_loop().run_in_executor(None, lambda: tasks[2].result()),
+            asyncio.get_event_loop().run_in_executor(None, lambda: tasks[3].result()),
+        )
+        
+        # Взвешенное среднее с оптимизацией
+        weights = np.array([0.3, 0.3, 0.2, 0.2])
+        scores = np.array([physical, mental, nutrition, sleep])
+        overall = float(np.dot(weights, scores))
+        
+        # Расчет тренда
+        trend = await self._calculate_trend_optimized(user_id, overall)
+        
+        score = HealthScore(
+            overall=round(overall, 4),
+            physical=round(physical, 4),
+            mental=round(mental, 4),
+            nutritional=round(nutrition, 4),
+            sleep=round(sleep, 4),
+            trend=round(trend, 4)
+        )
+        
+        # Асинхронное кэширование
+        asyncio.create_task(
+            self._redis_client.setex(cache_key, 300, score.json())
+        )
+        
+        return score
+    
+    def _calculate_physical_score_optimized(self, metrics: List[OptimizedHealthMetric]) -> float:
+        """Оптимизированный расчет физического здоровья"""
+        physical_metrics = [
+            m for m in metrics 
+            if m.metric_type in [HealthMetricType.STEPS, HealthMetricType.HEART_RATE, HealthMetricType.ACTIVITY]
+        ]
+        
+        if not physical_metrics:
+            return 0.0
+        
+        # Векторизованные вычисления с numpy
+        values = np.array([m.value for m in physical_metrics])
+        confidences = np.array([m.confidence for m in physical_metrics])
+        
+        # Взвешенное среднее с учетом confidence
+        normalized = self._normalize_values_optimized(values)
+        weighted_scores = normalized * confidences
+        
+        return float(np.mean(weighted_scores))
+    
+    def _normalize_values_optimized(self, values: np.ndarray, invert: bool = False) -> np.ndarray:
+        """Оптимизированная нормализация значений"""
+        if len(values) == 0:
+            return np.array([])
+        
+        min_val, max_val = values.min(), values.max()
+        if max_val == min_val:
+            return np.ones_like(values)
+        
+        normalized = (values - min_val) / (max_val - min_val)
+        return 1 - normalized if invert else normalized
+    
+    async def _calculate_trend_optimized(self, user_id: str, current_score: float) -> float:
+        """Расчет тренда здоровья"""
+        trend_key = f"health_trend:{user_id}"
+        
+        # Получение исторических данных
+        history_json = await self._redis_client.lrange(trend_key, 0, 29)  # Последние 30 записей
+        history = [float(score) for score in history_json]
+        
+        # Добавление текущего score
+        history.append(current_score)
+        
+        # Сохранение обновленной истории
+        await self._redis_client.lpush(trend_key, current_score)
+        await self._redis_client.ltrim(trend_key, 0, 29)
+        
+        if len(history) < 2:
+            return 0.0
+        
+        # Расчет тренда через линейную регрессию
+        x = np.arange(len(history))
+        y = np.array(history)
+        
+        try:
+            slope = np.polyfit(x, y, 1)[0]
+            return float(slope)
+        except:
+            return 0.0
+
+# Оптимизированный AI Agent System
+class OptimizedAIAgents:
+    __slots__ = ['_agents', '_model_cache', '_batch_predictor', '_feature_cache']
+    
+    def __init__(self):
+        self._agents = {}
+        self._model_cache = {}
+        self._batch_predictor = BatchPredictor()
+        self._feature_cache = LRUCache(maxsize=10000)
+    
+    async def initialize_agents_optimized(self):
+        """Оптимизированная инициализация AI агентов"""
+        agents_config = {
+            'fitness': {'path': 'models/fitness_v1.h5', 'batch_size': 64},
+            'nutrition': {'path': 'models/nutrition_v1.h5', 'batch_size': 32},
+            'mental_health': {'path': 'models/mental_v1.h5', 'batch_size': 16},
+            'sleep': {'path': 'models/sleep_v1.h5', 'batch_size': 32}
+        }
+        
+        # Параллельная загрузка моделей
+        load_tasks = []
+        for name, config in agents_config.items():
+            task = asyncio.create_task(
+                self._load_model_optimized(name, config['path'], config['batch_size'])
+            )
+            load_tasks.append(task)
+        
+        await asyncio.gather(*load_tasks)
+        logger.info("All AI agents initialized with optimization")
+    
+    async def batch_predict_optimized(self, user_data: Dict[str, List[OptimizedHealthMetric]]) -> Dict[str, Dict]:
+        """Оптимизированные пакетные предсказания"""
+        # Подготовка features батчем
+        features_batch = await self._prepare_features_batch(user_data)
+        
+        # Параллельные предсказания для разных типов метрик
+        prediction_tasks = [
+            self._batch_predict_fitness_optimized(features_batch['fitness']),
+            self._batch_predict_nutrition_optimized(features_batch['nutrition']),
+            self._batch_predict_mental_optimized(features_batch['mental']),
+            self._batch_predict_sleep_optimized(features_batch['sleep'])
+        ]
+        
+        results = await asyncio.gather(*prediction_tasks)
+        
+        return self._aggregate_predictions_optimized(results, list(user_data.keys()))
+    
+    async def _prepare_features_batch(self, user_data: Dict[str, List[OptimizedHealthMetric]]) -> Dict[str, Any]:
+        """Пакетная подготовка features"""
+        features = {'fitness': [], 'nutrition': [], 'mental': [], 'sleep': []}
+        
+        for user_id, metrics in user_data.items():
+            # Кэширование features для пользователя
+            cache_key = f"features:{user_id}"
+            cached_features = self._feature_cache.get(cache_key)
+            
+            if cached_features is None:
+                # Вычисление features
+                user_features = self._compute_user_features(metrics)
+                self._feature_cache.put(cache_key, user_features)
+            else:
+                user_features = cached_features
+            
+            # Группировка features по типам
+            for feature_type, feature_value in user_features.items():
+                features[feature_type].append(feature_value)
+        
+        return features
+
+# High-performance API с FastAPI
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.redis import RedisBackend
+from fastapi_cache.decorator import cache
+
+app = FastAPI(
+    title="Health-to-Earn Optimized API",
+    version="2.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
+)
+
+# Глобальные зависимости
+health_processor = OptimizedHealthProcessor("redis://localhost:6379")
+ai_agents = OptimizedAIAgents()
+
+@app.on_event("startup")
+async def startup_event():
+    """Оптимизированная инициализация при запуске"""
+    await health_processor.initialize()
+    await ai_agents.initialize_agents_optimized()
+    
+    # Инициализация кэша
+    redis_client = await redis.from_url("redis://localhost:6379")
+    FastAPICache.init(RedisBackend(redis_client), prefix="fastapi-cache")
+    
+    logger.info("Optimized backend fully initialized")
+
+# Оптимизированные endpoints
+@app.post("/api/v2/health/batch-process")
+@cache(expire=60)  # Кэширование на 60 секунд
+async def batch_process_health_data_optimized(
+    metrics: List[OptimizedHealthMetric],
+    background_tasks: BackgroundTasks
+):
+    """Оптимизированный endpoint для обработки health данных"""
+    start_time = time.perf_counter()
+    
+    try:
+        # Основная обработка
+        scores = await health_processor.process_health_batch(metrics)
+        
+        # Фоновая задача для AI анализа
+        background_tasks.add_task(
+            ai_agents.batch_predict_optimized,
+            {uid: [m for m in metrics if m.user_id == uid] for uid in scores.keys()}
+        )
+        
+        processing_time = time.perf_counter() - start_time
+        
+        return {
+            "status": "success",
+            "scores": scores,
+            "processing_time": round(processing_time, 4),
+            "metrics_processed": len(metrics),
+            "cache_hit": False
+        }
+        
+    except Exception as e:
+        logger.error(f"Batch processing error: {e}")
+        raise HTTPException(status_code=500, detail="Processing failed")
+
+@app.get("/api/v2/performance")
+async def get_performance_metrics():
+    """Endpoint для мониторинга производительности"""
+    import psutil
+    import resource
+    
+    process = psutil.Process()
+    memory_info = process.memory_info()
+    
+    return {
+        "memory_usage_mb": memory_info.rss / 1024 / 1024,
+        "memory_percent": process.memory_percent(),
+        "cpu_percent": process.cpu_percent(),
+        "active_threads": process.num_threads(),
+        "open_files": len(process.open_files()),
+        "active_connections": len(psutil.net_connections()),
+        "timestamp": time.time()
+    }
+
+# Утилиты для оптимизации
+class LRUCache:
+    """Простая реализация LRU кэша"""
+    
+    def __init__(self, maxsize: int = 1000):
+        self.maxsize = maxsize
+        self.cache = {}
+        self.order = []
+    
+    def get(self, key):
+        if key in self.cache:
+            # Перемещаем в конец (самый недавний)
+            self.order.remove(key)
+            self.order.append(key)
+            return self.cache[key]
+        return None
+    
+    def put(self, key, value):
+        if key in self.cache:
+            self.order.remove(key)
+        elif len(self.cache) >= self.maxsize:
+            # Удаляем самый старый
+            oldest = self.order.pop(0)
+            del self.cache[oldest]
+        
+        self.cache[key] = value
+        self.order.append(key)
+
+class BatchPredictor:
+    """Оптимизатор пакетных предсказаний"""
+    
+    def __init__(self, max_batch_size: int = 100):
+        self.max_batch_size = max_batch_size
+        self.batch_queue = []
+        self.processing = False
+    
+    async def add_prediction(self, data):
+        """Добавление данных в батч"""
+        self.batch_queue.append(data)
+        
+        if len(self.batch_queue) >= self.max_batch_size and not self.processing:
+            await self.process_batch()
+    
+    async def process_batch(self):
+        """Обработка полного батча"""
+        self.processing = True
+        try:
+            batch_data = self.batch_queue[:self.max_batch_size]
+            self.batch_queue = self.batch_queue[self.max_batch_size:]
+            
+            # Здесь была бы реальная обработка батча
+            await asyncio.sleep(0.001)  # Имитация ML inference
+            
+        finally:
+            self.processing = False
