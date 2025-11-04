@@ -1,0 +1,87 @@
+# architecture/additional_components.py
+class PerformanceOptimization:
+    """Стратегии оптимизации производительности"""
+    
+    def get_optimization_strategies(self) -> Dict[str, List[str]]:
+        return {
+            'database_optimization': [
+                'Query optimization with indexes',
+                'Database connection pooling',
+                'Read replicas for heavy read workloads',
+                'Query result caching with Redis'
+            ],
+            'api_optimization': [
+                'Response compression (gzip)',
+                'Pagination for large datasets',
+                'GraphQL for efficient data fetching',
+                'CDN for static assets'
+            ],
+            'caching_strategy': [
+                'Redis for session storage',
+                'CDN caching for static content',
+                'Database query result caching',
+                'API response caching'
+            ],
+            'frontend_optimization': [
+                'Code splitting and lazy loading',
+                'Image optimization and WebP format',
+                'Service workers for offline functionality',
+                'Bundle size optimization'
+            ]
+        }
+
+class DisasterRecovery:
+    """План аварийного восстановления"""
+    
+    def get_recovery_plan(self) -> Dict[str, Any]:
+        return {
+            'recovery_time_objective': {
+                'critical_services': '15 minutes',
+                'non_critical_services': '2 hours',
+                'full_platform': '4 hours'
+            },
+            'recovery_point_objective': {
+                'user_data': '5 minutes',
+                'health_data': '1 minute', 
+                'financial_data': '0 seconds'
+            },
+            'backup_strategy': {
+                'frequency': 'Continuous for databases, daily for file storage',
+                'retention': '30 days for daily, 1 year for monthly',
+                'verification': 'Automated backup validation'
+            },
+            'failover_strategy': {
+                'database': 'Automated cross-region failover',
+                'application': 'Traffic routing to healthy regions',
+                'dns': 'Route 53 health checks and failover'
+            }
+        }
+
+class CostOptimization:
+    """Стратегии оптимизации затрат"""
+    
+    def get_cost_optimization_strategies(self) -> Dict[str, List[str]]:
+        return {
+            'compute_optimization': [
+                'Right-sizing EC2 instances',
+                'Spot instances for batch processing',
+                'Auto-scaling based on load',
+                'Reserved instances for stable workloads'
+            ],
+            'storage_optimization': [
+                'S3 lifecycle policies for archiving',
+                'Database storage optimization',
+                'CDN for reduced data transfer costs',
+                'Compression for stored data'
+            ],
+            'data_transfer_optimization': [
+                'CloudFront for cached content delivery',
+                'VPC endpoints for AWS services',
+                'Data transfer planning between regions'
+            ],
+            'monitoring_optimization': [
+                'Cost allocation tags',
+                'Budget alerts and notifications',
+                'Regular cost review and optimization'
+            ]
+        }
