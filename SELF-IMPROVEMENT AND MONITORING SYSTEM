@@ -1,0 +1,902 @@
+# self_improvement/autonomous_improvement_engine.py
+from typing import Dict, List, Optional, Any, Callable
+from dataclasses import dataclass, field
+from enum import Enum
+import asyncio
+import time
+import numpy as np
+import pandas as pd
+from scipy import stats
+import warnings
+from datetime import datetime, timedelta
+import json
+import logging
+from prometheus_client import Counter, Gauge, Histogram, start_http_server
+import mlflow
+from sklearn.ensemble import IsolationForest
+import joblib
+
+warnings.filterwarnings('ignore')
+
+class ImprovementStrategy(Enum):
+    REINFORCEMENT_LEARNING = "rl"
+    BAYESIAN_OPTIMIZATION = "bayesian"
+    GRADIENT_FREE = "gradient_free"
+    EVOLUTIONARY = "evolutionary"
+    META_LEARNING = "meta_learning"
+
+class ComponentType(Enum):
+    API = "api"
+    DATABASE = "database"
+    AI_MODEL = "ai_model"
+    CACHE = "cache"
+    INFRASTRUCTURE = "infrastructure"
+
+@dataclass
+class SystemMetrics:
+    """Метрики системы для мониторинга и улучшения"""
+    response_time: float
+    throughput: float
+    error_rate: float
+    cpu_usage: float
+    memory_usage: float
+    cache_hit_rate: float
+    user_satisfaction: float
+    cost_efficiency: float
+    
+    timestamp: datetime = field(default_factory=datetime.now)
+
+@dataclass
+class ImprovementOpportunity:
+    """Обнаруженная возможность улучшения"""
+    component: ComponentType
+    metric: str
+    current_value: float
+    target_value: float
+    strategy: ImprovementStrategy
+    confidence: float
+    expected_impact: float
+    priority: str
+
+class AutonomousImprovementEngine:
+    """Движок автономного самоулучшения системы"""
+    
+    def __init__(self):
+        self.metrics_history: List[SystemMetrics] = []
+        self.improvement_history: List[Dict] = []
+        self.performance_baseline: Dict[str, float] = {}
+        self.anomaly_detector = AnomalyDetectionEngine()
+        self.optimization_strategies = self._initialize_strategies()
+        self.learning_rate = 0.1
+        self.adaptation_cycle = 0
+        
+        # Prometheus метрики
+        self.metrics_registry = self._initialize_metrics()
+        
+        # MLflow для отслеживания экспериментов
+        mlflow.set_tracking_uri("http://localhost:5000")
+    
+    def _initialize_metrics(self) -> Dict[str, Any]:
+        """Инициализация метрик Prometheus"""
+        return {
+            'response_time': Gauge('response_time_seconds', 'API response time'),
+            'error_rate': Gauge('error_rate_percent', 'Error rate percentage'),
+            'throughput': Gauge('throughput_requests', 'Requests per second'),
+            'improvement_count': Counter('improvements_total', 'Total improvements applied'),
+            'anomaly_count': Counter('anomalies_detected', 'Anomalies detected'),
+            'optimization_time': Histogram('optimization_duration', 'Time spent on optimization')
+        }
+    
+    def _initialize_strategies(self) -> Dict[ImprovementStrategy, Callable]:
+        """Инициализация стратегий улучшения"""
+        return {
+            ImprovementStrategy.REINFORCEMENT_LEARNING: self._apply_rl_optimization,
+            ImprovementStrategy.BAYESIAN_OPTIMIZATION: self._apply_bayesian_optimization,
+            ImprovementStrategy.EVOLUTIONARY: self._apply_evolutionary_optimization,
+            ImprovementStrategy.META_LEARNING: self._apply_meta_learning
+        }
+    
+    async def start_continuous_improvement(self):
+        """Запуск непрерывного самоулучшения"""
+        logger.info("🚀 Starting Autonomous Improvement Engine...")
+        
+        # Запуск мониторинга
+        asyncio.create_task(self._continuous_monitoring())
+        
+        # Запуск анализа и оптимизации
+        asyncio.create_task(self._continuous_optimization_cycle())
+        
+        # Запуск обучения на новых данных
+        asyncio.create_task(self._continuous_learning_cycle())
+        
+        logger.info("✅ Autonomous Improvement Engine is now active")
+    
+    async def _continuous_monitoring(self):
+        """Непрерывный мониторинг системы"""
+        while True:
+            try:
+                # Сбор метрик со всех компонентов системы
+                current_metrics = await self._collect_system_metrics()
+                
+                # Обновление исторических данных
+                self.metrics_history.append(current_metrics)
+                
+                # Обновление Prometheus метрик
+                self._update_prometheus_metrics(current_metrics)
+                
+                # Обнаружение аномалий
+                anomalies = await self.anomaly_detector.detect_anomalies(current_metrics, self.metrics_history)
+                if anomalies:
+                    await self._handle_anomalies(anomalies)
+                
+                # Сохранение в MLflow для анализа
+                self._log_metrics_to_mlflow(current_metrics)
+                
+                await asyncio.sleep(30)  # Мониторинг каждые 30 секунд
+                
+            except Exception as e:
+                logger.error(f"Monitoring error: {e}")
+                await asyncio.sleep(60)
+    
+    async def _continuous_optimization_cycle(self):
+        """Непрерывный цикл оптимизации"""
+        while True:
+            try:
+                with self.metrics_registry['optimization_time'].time():
+                    # Анализ текущей производительности
+                    performance_report = await self._analyze_performance()
+                    
+                    # Выявление возможностей улучшения
+                    opportunities = await self._identify_improvement_opportunities(performance_report)
+                    
+                    # Применение улучшений
+                    for opportunity in opportunities[:3]:  # Ограничиваем до 3 улучшений за цикл
+                        improvement_result = await self._apply_improvement(opportunity)
+                        self.improvement_history.append(improvement_result)
+                        
+                        # Обучение на основе результатов
+                        await self._learn_from_improvement(improvement_result)
+                
+                self.adaptation_cycle += 1
+                logger.info(f"🔄 Optimization cycle {self.adaptation_cycle} completed")
+                
+                await asyncio.sleep(300)  # Оптимизация каждые 5 минут
+                
+            except Exception as e:
+                logger.error(f"Optimization cycle error: {e}")
+                await asyncio.sleep(60)
+    
+    async def _continuous_learning_cycle(self):
+        """Непрерывное обучение на новых данных"""
+        while True:
+            try:
+                # Обучение моделей обнаружения аномалий
+                await self.anomaly_detector.retrain_models(self.metrics_history)
+                
+                # Оптимизация стратегий улучшения
+                await self._optimize_improvement_strategies()
+                
+                # Анализ эффективности улучшений
+                await self._analyze_improvement_effectiveness()
+                
+                await asyncio.sleep(3600)  # Обучение каждый час
+                
+            except Exception as e:
+                logger.error(f"Learning cycle error: {e}")
+                await asyncio.sleep(300)
+    
+    async def _collect_system_metrics(self) -> SystemMetrics:
+        """Сбор метрик со всех компонентов системы"""
+        # В реальной системе здесь будут API calls к различным компонентам
+        return SystemMetrics(
+            response_time=np.random.uniform(50, 200),  # ms
+            throughput=np.random.uniform(1000, 5000),  # requests/sec
+            error_rate=np.random.uniform(0.1, 2.0),    # %
+            cpu_usage=np.random.uniform(20, 80),       # %
+            memory_usage=np.random.uniform(30, 90),    # %
+            cache_hit_rate=np.random.uniform(80, 99),  # %
+            user_satisfaction=np.random.uniform(70, 95), # %
+            cost_efficiency=np.random.uniform(60, 90)  # %
+        )
+    
+    async def _analyze_performance(self) -> Dict[str, Any]:
+        """Анализ производительности системы"""
+        if len(self.metrics_history) < 10:
+            return {}
+        
+        recent_metrics = self.metrics_history[-50:]  # Последние 50 записей
+        
+        analysis = {
+            'trends': {},
+            'bottlenecks': [],
+            'improvement_areas': [],
+            'stability_score': 0.0
+        }
+        
+        # Анализ трендов
+        for metric_name in ['response_time', 'error_rate', 'throughput']:
+            values = [getattr(m, metric_name) for m in recent_metrics]
+            trend = self._calculate_trend(values)
+            analysis['trends'][metric_name] = trend
+        
+        # Выявление узких мест
+        analysis['bottlenecks'] = await self._identify_bottlenecks(recent_metrics)
+        
+        # Расчет стабильности
+        analysis['stability_score'] = self._calculate_stability_score(recent_metrics)
+        
+        return analysis
+    
+    async def _identify_improvement_opportunities(self, performance_report: Dict) -> List[ImprovementOpportunity]:
+        """Выявление возможностей для улучшения"""
+        opportunities = []
+        
+        # Анализ трендов для выявления ухудшений
+        for metric, trend in performance_report.get('trends', {}).items():
+            if trend > 0.1:  # Ухудшение тренда
+                current_value = getattr(self.metrics_history[-1], metric)
+                opportunity = ImprovementOpportunity(
+                    component=ComponentType.API,
+                    metric=metric,
+                    current_value=current_value,
+                    target_value=current_value * 0.8,  # Улучшение на 20%
+                    strategy=self._select_strategy_for_metric(metric),
+                    confidence=0.7,
+                    expected_impact=0.3,
+                    priority="high" if trend > 0.2 else "medium"
+                )
+                opportunities.append(opportunity)
+        
+        # Добавление возможностей из обнаруженных узких мест
+        for bottleneck in performance_report.get('bottlenecks', []):
+            opportunity = ImprovementOpportunity(
+                component=bottleneck['component'],
+                metric=bottleneck['metric'],
+                current_value=bottleneck['current_value'],
+                target_value=bottleneck['target_value'],
+                strategy=self._select_strategy_for_bottleneck(bottleneck),
+                confidence=bottleneck['confidence'],
+                expected_impact=bottleneck['impact'],
+                priority=bottleneck['priority']
+            )
+            opportunities.append(opportunity)
+        
+        # Сортировка по приоритету и ожидаемому воздействию
+        opportunities.sort(key=lambda x: (x.priority, x.expected_impact), reverse=True)
+        
+        return opportunities
+    
+    async def _apply_improvement(self, opportunity: ImprovementOpportunity) -> Dict[str, Any]:
+        """Применение улучшения"""
+        logger.info(f"🎯 Applying improvement: {opportunity.metric} with {opportunity.strategy.value}")
+        
+        strategy_func = self.optimization_strategies.get(opportunity.strategy)
+        if not strategy_func:
+            return {'success': False, 'error': 'Strategy not found'}
+        
+        try:
+            start_time = time.time()
+            result = await strategy_func(opportunity)
+            duration = time.time() - start_time
+            
+            result.update({
+                'duration': duration,
+                'timestamp': datetime.now(),
+                'opportunity': opportunity.__dict__
+            })
+            
+            # Обновление счетчика улучшений
+            self.metrics_registry['improvement_count'].inc()
+            
+            logger.info(f"✅ Improvement applied successfully in {duration:.2f}s")
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Improvement failed: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    async def _apply_rl_optimization(self, opportunity: ImprovementOpportunity) -> Dict[str, Any]:
+        """Оптимизация с помощью Reinforcement Learning"""
+        # В реальной системе здесь будет сложная RL логика
+        await asyncio.sleep(0.1)  # Имитация работы
+        
+        return {
+            'success': True,
+            'strategy': 'reinforcement_learning',
+            'parameters_optimized': ['cache_size', 'connection_pool'],
+            'improvement_achieved': 0.15,
+            'new_metrics': await self._simulate_improvement(opportunity, 0.15)
+        }
+    
+    async def _apply_bayesian_optimization(self, opportunity: ImprovementOpportunity) -> Dict[str, Any]:
+        """Байесовская оптимизация гиперпараметров"""
+        await asyncio.sleep(0.2)  # Имитация работы
+        
+        return {
+            'success': True,
+            'strategy': 'bayesian_optimization',
+            'parameters_optimized': ['learning_rate', 'batch_size'],
+            'improvement_achieved': 0.25,
+            'new_metrics': await self._simulate_improvement(opportunity, 0.25)
+        }
+    
+    async def _learn_from_improvement(self, result: Dict[str, Any]):
+        """Обучение на основе результатов улучшения"""
+        if result.get('success'):
+            # Увеличение confidence для успешных стратегий
+            strategy = result['strategy']
+            improvement = result.get('improvement_achieved', 0)
+            
+            # Адаптация learning rate на основе успеха
+            if improvement > 0.1:
+                self.learning_rate = min(0.3, self.learning_rate * 1.1)
+            else:
+                self.learning_rate = max(0.05, self.learning_rate * 0.9)
+            
+            # Логирование для анализа
+            mlflow.log_metric(f"improvement_{strategy}", improvement)
+            mlflow.log_metric("learning_rate", self.learning_rate)
+    
+    def _calculate_trend(self, values: List[float]) -> float:
+        """Расчет тренда временного ряда"""
+        if len(values) < 2:
+            return 0.0
+        
+        x = np.arange(len(values))
+        slope, _, _, _, _ = stats.linregress(x, values)
+        return slope
+    
+    def _calculate_stability_score(self, metrics: List[SystemMetrics]) -> float:
+        """Расчет оценки стабильности системы"""
+        if len(metrics) < 5:
+            return 1.0
+        
+        # Расчет вариативности ключевых метрик
+        response_times = [m.response_time for m in metrics]
+        error_rates = [m.error_rate for m in metrics]
+        
+        response_cv = np.std(response_times) / np.mean(response_times) if np.mean(response_times) > 0 else 0
+        error_cv = np.std(error_rates) / np.mean(error_rates) if np.mean(error_rates) > 0 else 0
+        
+        # Чем меньше вариативность, тем выше стабильность
+        stability = 1.0 - (response_cv * 0.6 + error_cv * 0.4)
+        return max(0.0, min(1.0, stability))
+
+class AnomalyDetectionEngine:
+    """Движок обнаружения аномалий"""
+    
+    def __init__(self):
+        self.models: Dict[str, Any] = {}
+        self.anomaly_thresholds: Dict[str, float] = {}
+        self.training_data: List[SystemMetrics] = []
+    
+    async def detect_anomalies(self, current_metrics: SystemMetrics, history: List[SystemMetrics]) -> List[Dict]:
+        """Обнаружение аномалий в метриках"""
+        anomalies = []
+        
+        # Проверка каждой метрики на аномалии
+        for metric_name in ['response_time', 'error_rate', 'cpu_usage', 'memory_usage']:
+            current_value = getattr(current_metrics, metric_name)
+            historical_values = [getattr(m, metric_name) for m in history[-100:]]  # Последние 100 значений
+            
+            if len(historical_values) < 10:
+                continue
+            
+            # Обнаружение аномалий с помощью Isolation Forest
+            is_anomaly = await self._check_metric_anomaly(metric_name, current_value, historical_values)
+            
+            if is_anomaly:
+                anomalies.append({
+                    'metric': metric_name,
+                    'value': current_value,
+                    'severity': self._calculate_anomaly_severity(metric_name, current_value, historical_values),
+                    'timestamp': current_metrics.timestamp
+                })
+        
+        return anomalies
+    
+    async def retrain_models(self, training_data: List[SystemMetrics]):
+        """Переобучение моделей обнаружения аномалий"""
+        if len(training_data) < 50:
+            return
+        
+        self.training_data = training_data[-1000:]  # Используем последние 1000 записей
+        
+        for metric_name in ['response_time', 'error_rate', 'cpu_usage', 'memory_usage']:
+            values = np.array([getattr(m, metric_name) for m in self.training_data]).reshape(-1, 1)
+            
+            # Обучение Isolation Forest для каждой метрики
+            model = IsolationForest(contamination=0.1, random_state=42)
+            model.fit(values)
+            
+            self.models[metric_name] = model
+            
+            # Обновление порогов аномалий
+            self.anomaly_thresholds[metric_name] = np.percentile(values, 95)
+    
+    async def _check_metric_anomaly(self, metric_name: str, current_value: float, historical_values: List[float]) -> bool:
+        """Проверка метрики на аномалию"""
+        if metric_name not in self.models:
+            # Используем простой статистический метод если модель не обучена
+            return self._statistical_anomaly_detection(current_value, historical_values)
+        
+        # Используем обученную модель
+        try:
+            prediction = self.models[metric_name].predict([[current_value]])
+            return prediction[0] == -1  # -1 означает аномалию в IsolationForest
+        except:
+            return self._statistical_anomaly_detection(current_value, historical_values)
+    
+    def _statistical_anomaly_detection(self, current_value: float, historical_values: List[float]) -> bool:
+        """Статистическое обнаружение аномалий"""
+        if len(historical_values) < 10:
+            return False
+        
+        mean = np.mean(historical_values)
+        std = np.std(historical_values)
+        
+        if std == 0:
+            return False
+        
+        # Аномалия если значение отклоняется более чем на 3 стандартных отклонения
+        z_score = abs(current_value - mean) / std
+        return z_score > 3
+    
+    def _calculate_anomaly_severity(self, metric_name: str, current_value: float, historical_values: List[float]) -> str:
+        """Расчет серьезности аномалии"""
+        mean = np.mean(historical_values)
+        std = np.std(historical_values)
+        
+        if std == 0:
+            return "low"
+        
+        z_score = abs(current_value - mean) / std
+        
+        if z_score > 5:
+            return "critical"
+        elif z_score > 4:
+            return "high"
+        elif z_score > 3:
+            return "medium"
+        else:
+            return "low"
+
+class SmartMonitoringSystem:
+    """Умная система мониторинга с прогнозированием"""
+    
+    def __init__(self):
+        self.metrics_storage = MetricsStorage()
+        self.forecaster = TimeSeriesForecaster()
+        self.alert_manager = AlertManager()
+        self.performance_analyzer = PerformanceAnalyzer()
+    
+    async def start_comprehensive_monitoring(self):
+        """Запуск комплексного мониторинга"""
+        logger.info("📊 Starting Smart Monitoring System...")
+        
+        # Запуск различных компонентов мониторинга
+        tasks = [
+            self._real_time_metrics_collection(),
+            self._predictive_analysis(),
+            self._capacity_planning(),
+            self._cost_optimization_monitoring(),
+            self._security_monitoring()
+        ]
+        
+        await asyncio.gather(*tasks)
+    
+    async def _real_time_metrics_collection(self):
+        """Сбор метрик в реальном времени"""
+        while True:
+            try:
+                # Сбор метрик со всех сервисов
+                metrics = await self._collect_all_metrics()
+                
+                # Сохранение в хранилище
+                await self.metrics_storage.store_metrics(metrics)
+                
+                # Анализ в реальном времени
+                await self._analyze_real_time_metrics(metrics)
+                
+                await asyncio.sleep(10)  # Сбор каждые 10 секунд
+                
+            except Exception as e:
+                logger.error(f"Real-time metrics collection error: {e}")
+                await asyncio.sleep(30)
+    
+    async def _predictive_analysis(self):
+        """Прогнозный анализ и предсказание проблем"""
+        while True:
+            try:
+                # Получение исторических данных
+                historical_data = await self.metrics_storage.get_historical_data(hours=24)
+                
+                if len(historical_data) > 100:
+                    # Прогнозирование будущих метрик
+                    forecasts = await self.forecaster.forecast_metrics(historical_data)
+                    
+                    # Проверка прогнозов на потенциальные проблемы
+                    await self._check_forecasts_for_issues(forecasts)
+                
+                await asyncio.sleep(300)  # Анализ каждые 5 минут
+                
+            except Exception as e:
+                logger.error(f"Predictive analysis error: {e}")
+                await asyncio.sleep(60)
+    
+    async def _capacity_planning(self):
+        """Планирование емкости на основе трендов"""
+        while True:
+            try:
+                # Анализ трендов использования ресурсов
+                usage_trends = await self.performance_analyzer.analyze_usage_trends()
+                
+                # Прогнозирование будущих потребностей
+                capacity_requirements = await self._forecast_capacity_requirements(usage_trends)
+                
+                # Рекомендации по масштабированию
+                scaling_recommendations = await self._generate_scaling_recommendations(capacity_requirements)
+                
+                # Автоматическое применение рекомендаций если необходимо
+                if scaling_recommendations.get('auto_scale', False):
+                    await self._apply_scaling_recommendations(scaling_recommendations)
+                
+                await asyncio.sleep(1800)  # Планирование каждые 30 минут
+                
+            except Exception as e:
+                logger.error(f"Capacity planning error: {e}")
+                await asyncio.sleep(300)
+
+class MetricsStorage:
+    """Хранилище метрик с оптимизацией"""
+    
+    def __init__(self):
+        self.recent_metrics: List[SystemMetrics] = []
+        self.historical_data: pd.DataFrame = pd.DataFrame()
+        self.retention_policy = {
+            'realtime': timedelta(hours=24),
+            'hourly': timedelta(days=7),
+            'daily': timedelta(days=30),
+            'monthly': timedelta(days=365)
+        }
+    
+    async def store_metrics(self, metrics: SystemMetrics):
+        """Сохранение метрик с оптимизацией памяти"""
+        self.recent_metrics.append(metrics)
+        
+        # Ограничение размера in-memory хранилища
+        if len(self.recent_metrics) > 10000:
+            self._compress_and_archive_metrics()
+    
+    async def get_historical_data(self, hours: int = 24) -> List[SystemMetrics]:
+        """Получение исторических данных"""
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+        return [m for m in self.recent_metrics if m.timestamp >= cutoff_time]
+    
+    def _compress_and_archive_metrics(self):
+        """Сжатие и архивация старых метрик"""
+        if len(self.recent_metrics) < 5000:
+            return
+        
+        # Сохранение в сжатом формате
+        old_metrics = self.recent_metrics[:5000]
+        self.recent_metrics = self.recent_metrics[5000:]
+        
+        # Здесь была бы реальная архивация в базу данных или файловую систему
+        logger.info(f"📦 Compressed and archived {len(old_metrics)} metrics")
+
+class AlertManager:
+    """Умный менеджер алертов"""
+    
+    def __init__(self):
+        self.alert_rules = self._initialize_alert_rules()
+        self.alert_history: List[Dict] = []
+        self.alert_cooldown: Dict[str, datetime] = {}
+    
+    def _initialize_alert_rules(self) -> List[Dict]:
+        """Инициализация правил алертов"""
+        return [
+            {
+                'metric': 'response_time',
+                'condition': '>',
+                'threshold': 500,  # ms
+                'severity': 'critical',
+                'cooldown': timedelta(minutes=5)
+            },
+            {
+                'metric': 'error_rate', 
+                'condition': '>',
+                'threshold': 5.0,  # %
+                'severity': 'high',
+                'cooldown': timedelta(minutes=10)
+            },
+            {
+                'metric': 'cpu_usage',
+                'condition': '>', 
+                'threshold': 90,  # %
+                'severity': 'medium',
+                'cooldown': timedelta(minutes=15)
+            }
+        ]
+    
+    async def check_alerts(self, metrics: SystemMetrics):
+        """Проверка метрик на срабатывание алертов"""
+        for rule in self.alert_rules:
+            metric_value = getattr(metrics, rule['metric'])
+            
+            if self._evaluate_condition(metric_value, rule['condition'], rule['threshold']):
+                await self._trigger_alert(rule, metric_value, metrics.timestamp)
+    
+    def _evaluate_condition(self, value: float, condition: str, threshold: float) -> bool:
+        """Вычисление условия алерта"""
+        if condition == '>':
+            return value > threshold
+        elif condition == '>=':
+            return value >= threshold
+        elif condition == '<':
+            return value < threshold
+        elif condition == '<=':
+            return value <= threshold
+        elif condition == '==':
+            return value == threshold
+        return False
+    
+    async def _trigger_alert(self, rule: Dict, value: float, timestamp: datetime):
+        """Триггер алерта с коoldown периодом"""
+        alert_key = f"{rule['metric']}_{rule['condition']}_{rule['threshold']}"
+        
+        # Проверка cooldown периода
+        if alert_key in self.alert_cooldown:
+            if datetime.now() - self.alert_cooldown[alert_key] < rule['cooldown']:
+                return
+        
+        # Создание алерта
+        alert = {
+            'rule': rule,
+            'value': value,
+            'timestamp': timestamp,
+            'severity': rule['severity'],
+            'resolved': False
+        }
+        
+        self.alert_history.append(alert)
+        self.alert_cooldown[alert_key] = datetime.now()
+        
+        # Отправка уведомления
+        await self._send_alert_notification(alert)
+        
+        logger.warning(f"🚨 Alert triggered: {rule['metric']} {rule['condition']} {rule['threshold']} (current: {value})")
+    
+    async def _send_alert_notification(self, alert: Dict):
+        """Отправка уведомления об алерте"""
+        # В реальной системе здесь была бы интеграция с Slack, Email, PagerDuty и т.д.
+        message = f"""
+        🔥 ALERT: {alert['severity'].upper()}
+        Metric: {alert['rule']['metric']}
+        Condition: {alert['rule']['condition']} {alert['rule']['threshold']}
+        Current Value: {alert['value']}
+        Time: {alert['timestamp']}
+        """
+        
+        print(message)  # В реальной системе заменить на реальную отправку
+
+# Главный класс для запуска всей системы
+class SelfImprovingMonitoringSystem:
+    """Главная система самоулучшения и мониторинга"""
+    
+    def __init__(self):
+        self.improvement_engine = AutonomousImprovementEngine()
+        self.monitoring_system = SmartMonitoringSystem()
+        self.health_checker = SystemHealthChecker()
+        
+        # Настройка логирования
+        self._setup_logging()
+    
+    def _setup_logging(self):
+        """Настройка логирования"""
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler('self_improvement.log'),
+                logging.StreamHandler()
+            ]
+        )
+    
+    async def start_complete_system(self):
+        """Запуск полной системы самоулучшения и мониторинга"""
+        logger.info("🌐 Starting Complete Self-Improving Monitoring System...")
+        
+        # Запуск Prometheus метрик сервера
+        start_http_server(8000)
+        
+        # Запуск всех компонентов
+        tasks = [
+            self.improvement_engine.start_continuous_improvement(),
+            self.monitoring_system.start_comprehensive_monitoring(),
+            self.health_checker.start_health_checks(),
+            self._global_coordination_loop()
+        ]
+        
+        await asyncio.gather(*tasks)
+    
+    async def _global_coordination_loop(self):
+        """Глобальная координация между компонентами"""
+        while True:
+            try:
+                # Координация улучшений и мониторинга
+                await self._coordinate_improvements()
+                
+                # Анализ общей эффективности системы
+                await self._analyze_system_effectiveness()
+                
+                # Генерация отчетов
+                await self._generate_reports()
+                
+                await asyncio.sleep(600)  # Координация каждые 10 минут
+                
+            except Exception as e:
+                logger.error(f"Global coordination error: {e}")
+                await asyncio.sleep(60)
+
+class SystemHealthChecker:
+    """Проверка здоровья системы"""
+    
+    async def start_health_checks(self):
+        """Запуск проверок здоровья"""
+        while True:
+            try:
+                health_status = await self._check_system_health()
+                
+                if health_status['overall'] != 'healthy':
+                    await self._handle_health_issues(health_status)
+                
+                await asyncio.sleep(60)  # Проверка каждую минуту
+                
+            except Exception as e:
+                logger.error(f"Health check error: {e}")
+                await asyncio.sleep(30)
+    
+    async def _check_system_health(self) -> Dict[str, Any]:
+        """Проверка здоровья всех компонентов системы"""
+        health_checks = {
+            'api': await self._check_api_health(),
+            'database': await self._check_database_health(),
+            'cache': await self._check_cache_health(),
+            'ai_models': await self._check_ai_models_health()
+        }
+        
+        # Расчет общего здоровья системы
+        overall_health = 'healthy'
+        if any(check['status'] == 'critical' for check in health_checks.values()):
+            overall_health = 'critical'
+        elif any(check['status'] == 'degraded' for check in health_checks.values()):
+            overall_health = 'degraded'
+        
+        return {
+            'overall': overall_health,
+            'components': health_checks,
+            'timestamp': datetime.now()
+        }
+
+# Утилитарные функции
+async def _simulate_improvement(opportunity: ImprovementOpportunity, improvement: float) -> Dict[str, float]:
+    """Симуляция улучшения метрик"""
+    return {
+        opportunity.metric: opportunity.current_value * (1 - improvement),
+        'user_satisfaction': min(100, opportunity.current_value + improvement * 10)
+    }
+
+def _select_strategy_for_metric(metric: str) -> ImprovementStrategy:
+    """Выбор стратегии для метрики"""
+    strategy_map = {
+        'response_time': ImprovementStrategy.BAYESIAN_OPTIMIZATION,
+        'error_rate': ImprovementStrategy.REINFORCEMENT_LEARNING,
+        'throughput': ImprovementStrategy.EVOLUTIONARY,
+        'cache_hit_rate': ImprovementStrategy.META_LEARNING
+    }
+    return strategy_map.get(metric, ImprovementStrategy.BAYESIAN_OPTIMIZATION)
+
+async def _identify_bottlenecks(metrics: List[SystemMetrics]) -> List[Dict]:
+    """Выявление узких мест в системе"""
+    bottlenecks = []
+    
+    # Анализ последних метрик
+    recent = metrics[-10:]
+    
+    # Проверка высокого response time
+    avg_response_time = np.mean([m.response_time for m in recent])
+    if avg_response_time > 300:  # ms
+        bottlenecks.append({
+            'component': ComponentType.API,
+            'metric': 'response_time',
+            'current_value': avg_response_time,
+            'target_value': 150,
+            'confidence': 0.8,
+            'impact': 0.4,
+            'priority': 'high'
+        })
+    
+    # Проверка высокой error rate
+    avg_error_rate = np.mean([m.error_rate for m in recent])
+    if avg_error_rate > 2.0:  # %
+        bottlenecks.append({
+            'component': ComponentType.API,
+            'metric': 'error_rate', 
+            'current_value': avg_error_rate,
+            'target_value': 0.5,
+            'confidence': 0.9,
+            'impact': 0.6,
+            'priority': 'critical'
+        })
+    
+    return bottlenecks
+
+def _select_strategy_for_bottleneck(bottleneck: Dict) -> ImprovementStrategy:
+    """Выбор стратегии для узкого места"""
+    if bottleneck['priority'] == 'critical':
+        return ImprovementStrategy.REINFORCEMENT_LEARNING
+    elif bottleneck['metric'] == 'response_time':
+        return ImprovementStrategy.BAYESIAN_OPTIMIZATION
+    else:
+        return ImprovementStrategy.EVOLUTIONARY
+
+async def _apply_evolutionary_optimization(opportunity: ImprovementOpportunity) -> Dict[str, Any]:
+    """Эволюционная оптимизация"""
+    await asyncio.sleep(0.15)
+    return {
+        'success': True,
+        'strategy': 'evolutionary',
+        'parameters_optimized': ['population_size', 'mutation_rate'],
+        'improvement_achieved': 0.18,
+        'new_metrics': await _simulate_improvement(opportunity, 0.18)
+    }
+
+async def _apply_meta_learning(opportunity: ImprovementOpportunity) -> Dict[str, Any]:
+    """Мета-обучение"""
+    await asyncio.sleep(0.25)
+    return {
+        'success': True, 
+        'strategy': 'meta_learning',
+        'parameters_optimized': ['learning_strategy', 'adaptation_rate'],
+        'improvement_achieved': 0.22,
+        'new_metrics': await _simulate_improvement(opportunity, 0.22)
+    }
+
+async def _handle_anomalies(anomalies: List[Dict]):
+    """Обработка обнаруженных аномалий"""
+    for anomaly in anomalies:
+        if anomaly['severity'] in ['critical', 'high']:
+            logger.warning(f"🚨 Critical anomaly detected: {anomaly['metric']} = {anomaly['value']}")
+
+def _update_prometheus_metrics(self, metrics: SystemMetrics):
+    """Обновление Prometheus метрик"""
+    self.metrics_registry['response_time'].set(metrics.response_time)
+    self.metrics_registry['error_rate'].set(metrics.error_rate) 
+    self.metrics_registry['throughput'].set(metrics.throughput)
+
+def _log_metrics_to_mlflow(metrics: SystemMetrics):
+    """Логирование метрик в MLflow"""
+    try:
+        mlflow.log_metric("response_time", metrics.response_time)
+        mlflow.log_metric("error_rate", metrics.error_rate)
+        mlflow.log_metric("throughput", metrics.throughput)
+        mlflow.log_metric("cpu_usage", metrics.cpu_usage)
+        mlflow.log_metric("memory_usage", metrics.memory_usage)
+        mlflow.log_metric("cache_hit_rate", metrics.cache_hit_rate)
+        mlflow.log_metric("user_satisfaction", metrics.user_satisfaction)
+        mlflow.log_metric("cost_efficiency", metrics.cost_efficiency)
+    except:
+        pass  # MLflow может быть недоступен
+
+# Глобальный логгер
+logger = logging.getLogger('SelfImprovementSystem')
+
+# Запуск системы
+async def main():
+    """Основная функция запуска"""
+    system = SelfImprovingMonitoringSystem()
+    await system.start_complete_system()
+
+if __name__ == "__main__":
+    asyncio.run(main())
