@@ -1,0 +1,250 @@
+# rollout/rollout_dashboard.py
+import streamlit as st
+import plotly.graph_objects as go
+import plotly.express as px
+import pandas as pd
+from datetime import datetime, timedelta
+import numpy as np
+
+class RolloutDashboard:
+    """Dashboard для мониторинга постепенного внедрения"""
+    
+    def __init__(self, rollout_strategy: GradualRolloutStrategy):
+        self.rollout_strategy = rollout_strategy
+        self.setup_dashboard()
+    
+    def setup_dashboard(self):
+        """Настройка dashboard"""
+        st.set_page_config(
+            page_title="Health-to-Earn Rollout Dashboard",
+            page_icon="🚀",
+            layout="wide"
+        )
+    
+    def render_dashboard(self):
+        """Рендер всего dashboard"""
+        st.title("🚀 Health-to-Earn - Gradual Rollout Dashboard")
+        
+        # Общий прогресс
+        self._render_overall_progress()
+        
+        # Текущая фаза
+        self._render_current_phase()
+        
+        # Метрики rollout
+        self._render_rollout_metrics()
+        
+        # Риски и issues
+        self._render_risks_issues()
+        
+        # Пользовательская аналитика
+        self._render_user_analytics()
+        
+        # Feature flags статус
+        self._render_feature_flags()
+    
+    def _render_overall_progress(self):
+        """Рендер общего прогресса"""
+        st.header("📊 Overall Rollout Progress")
+        
+        # Расчет прогресса
+        total_phases = len(RolloutPhase)
+        current_phase_index = list(RolloutPhase).index(self.rollout_strategy.current_phase)
+        progress_percentage = (current_phase_index / (total_phases - 1)) * 100
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Current Phase", self.rollout_strategy.current_phase.value.replace('_', ' ').title())
+        
+        with col2:
+            st.metric("Overall Progress", f"{progress_percentage:.1f}%")
+        
+        with col3:
+            st.metric("Days Running", "45")  # Заглушка
+        
+        # Progress bar
+        st.progress(progress_percentage / 100)
+        
+        # Timeline
+        self._render_rollout_timeline()
+    
+    def _render_current_phase(self):
+        """Рендер текущей фазы"""
+        st.header("🎯 Current Phase Details")
+        
+        current_phase = self.rollout_strategy.current_phase
+        config = self.rollout_strategy.rollout_configs.get(current_phase, {})
+        
+        if config:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.subheader("Configuration")
+                st.write(f"**User Percentage:** {config.user_percentage}%")
+                st.write(f"**Duration:** {config.duration_days} days")
+                st.write(f"**User Segments:** {[s.value for s in config.user_segments]}")
+            
+            with col2:
+                st.subheader("Success Criteria")
+                for criterion in config.success_criteria:
+                    st.write(f"✅ {criterion}")
+            
+            # Метрики текущей фазы
+            st.subheader("Phase Metrics")
+            self._render_phase_metrics(current_phase)
+    
+    def _render_rollout_metrics(self):
+        """Рендер метрик rollout"""
+        st.header("📈 Rollout Metrics")
+        
+        # Создание synthetic данных для демонстрации
+        dates = pd.date_range('2024-01-01', periods=30, freq='D')
+        metrics_data = pd.DataFrame({
+            'date': dates,
+            'user_satisfaction': np.random.uniform(70, 95, 30),
+            'system_uptime': np.random.uniform(99, 99.9, 30),
+            'response_time': np.random.uniform(50, 300, 30),
+            'error_rate': np.random.uniform(0.1, 2.0, 30),
+            'active_users': np.random.randint(100, 5000, 30)
+        })
+        
+        # Графики метрик
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig1 = px.line(
+                metrics_data, x='date', y='user_satisfaction',
+                title='User Satisfaction Trend',
+                labels={'user_satisfaction': 'Satisfaction (%)', 'date': 'Date'}
+            )
+            st.plotly_chart(fig1, use_container_width=True)
+        
+        with col2:
+            fig2 = px.line(
+                metrics_data, x='date', y='system_uptime',
+                title='System Uptime Trend',
+                labels={'system_uptime': 'Uptime (%)', 'date': 'Date'}
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+        
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            fig3 = px.line(
+                metrics_data, x='date', y='response_time',
+                title='Response Time Trend',
+                labels={'response_time': 'Response Time (ms)', 'date': 'Date'}
+            )
+            st.plotly_chart(fig3, use_container_width=True)
+        
+        with col4:
+            fig4 = px.line(
+                metrics_data, x='date', y='active_users',
+                title='Active Users Growth',
+                labels={'active_users': 'Active Users', 'date': 'Date'}
+            )
+            st.plotly_chart(fig4, use_container_width=True)
+    
+    def _render_risks_issues(self):
+        """Рендер рисков и проблем"""
+        st.header("🚨 Risks & Issues")
+        
+        # Создание synthetic данных о рисках
+        risks_data = pd.DataFrame({
+            'risk_type': ['Technical', 'Business', 'Operational', 'Security'],
+            'high_risk': [2, 1, 0, 1],
+            'medium_risk': [3, 2, 2, 1],
+            'low_risk': [5, 4, 3, 2]
+        })
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Risk Distribution")
+            fig = px.bar(
+                risks_data, x='risk_type', y=['high_risk', 'medium_risk', 'low_risk'],
+                title='Risks by Type and Severity',
+                labels={'value': 'Number of Risks', 'risk_type': 'Risk Type'},
+                barmode='stack'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            st.subheader("Active Issues")
+            
+            issues = [
+                {"type": "Performance", "severity": "High", "status": "Investigating"},
+                {"type": "User Feedback", "severity": "Medium", "status": "In Progress"},
+                {"type": "Integration", "severity": "Low", "status": "Monitoring"}
+            ]
+            
+            for issue in issues:
+                severity_color = {
+                    "High": "red", 
+                    "Medium": "orange", 
+                    "Low": "green"
+                }.get(issue["severity"], "gray")
+                
+                st.write(
+                    f"<div style='border-left: 4px solid {severity_color}; padding-left: 10px; margin: 5px 0;'>"
+                    f"<strong>{issue['type']}</strong> - {issue['severity']} - {issue['status']}"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+    
+    def _render_rollout_timeline(self):
+        """Рендер timeline rollout"""
+        phases = [
+            {"phase": "Pre-Alpha", "start_date": "2024-01-01", "end_date": "2024-01-14", "status": "completed"},
+            {"phase": "Alpha", "start_date": "2024-01-15", "end_date": "2024-02-05", "status": "completed"},
+            {"phase": "Closed Beta", "start_date": "2024-02-06", "end_date": "2024-03-07", "status": "completed"},
+            {"phase": "Open Beta", "start_date": "2024-03-08", "end_date": "2024-04-22", "status": "in_progress"},
+            {"phase": "Gradual Release", "start_date": "2024-04-23", "end_date": "2024-06-22", "status": "planned"},
+            {"phase": "GA", "start_date": "2024-06-23", "end_date": "2024-07-23", "status": "planned"}
+        ]
+        
+        fig = go.Figure()
+        
+        for i, phase in enumerate(phases):
+            start = pd.to_datetime(phase["start_date"])
+            end = pd.to_datetime(phase["end_date"])
+            
+            color = {
+                "completed": "green",
+                "in_progress": "orange", 
+                "planned": "lightgray"
+            }[phase["status"]]
+            
+            fig.add_trace(go.Bar(
+                y=[phase["phase"]],
+                x=[(end - start).days],
+                base=[start],
+                orientation='h',
+                marker_color=color,
+                name=phase["status"].replace('_', ' ').title(),
+                hovertemplate=f"<b>{phase['phase']}</b><br>"
+                            f"Duration: {(end - start).days} days<br>"
+                            f"Status: {phase['status']}<extra></extra>"
+            ))
+        
+        fig.update_layout(
+            title="Rollout Timeline",
+            xaxis_title="Timeline",
+            yaxis_title="Phase",
+            showlegend=False,
+            height=300
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+
+# Запуск dashboard
+def run_rollout_dashboard(rollout_strategy: GradualRolloutStrategy):
+    """Запуск dashboard rollout"""
+    dashboard = RolloutDashboard(rollout_strategy)
+    dashboard.render_dashboard()
+
+if __name__ == "__main__":
+    # Для тестирования dashboard
+    strategy = GradualRolloutStrategy()
+    run_rollout_dashboard(strategy)
