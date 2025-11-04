@@ -1,0 +1,231 @@
+# monitoring/dashboard.py
+import streamlit as st
+import plotly.graph_objects as go
+import plotly.express as px
+from datetime import datetime, timedelta
+import pandas as pd
+import numpy as np
+
+class SelfImprovementDashboard:
+    """Dashboard для визуализации самоулучшения и мониторинга"""
+    
+    def __init__(self, improvement_engine: AutonomousImprovementEngine):
+        self.improvement_engine = improvement_engine
+        self.setup_dashboard()
+    
+    def setup_dashboard(self):
+        """Настройка dashboard"""
+        st.set_page_config(
+            page_title="Health-to-Earn Self-Improvement Dashboard",
+            page_icon="🧠",
+            layout="wide"
+        )
+    
+    def render_dashboard(self):
+        """Рендер всего dashboard"""
+        st.title("🧠 Health-to-Earn - Self-Improvement Monitoring Dashboard")
+        
+        # Основные метрики
+        self._render_key_metrics()
+        
+        # Графики производительности
+        self._render_performance_charts()
+        
+        # История улучшений
+        self._render_improvement_history()
+        
+        # Обнаружение аномалий
+        self._render_anomaly_detection()
+        
+        # Прогнозы и рекомендации
+        self._render_predictions_recommendations()
+    
+    def _render_key_metrics(self):
+        """Рендер ключевых метрик"""
+        st.header("📊 Key Metrics")
+        
+        if not self.improvement_engine.metrics_history:
+            st.warning("No metrics data available")
+            return
+        
+        latest_metrics = self.improvement_engine.metrics_history[-1]
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "Response Time", 
+                f"{latest_metrics.response_time:.1f}ms",
+                delta=f"{self._calculate_response_time_trend():.1f}ms"
+            )
+        
+        with col2:
+            st.metric(
+                "Error Rate",
+                f"{latest_metrics.error_rate:.2f}%",
+                delta=f"{self._calculate_error_rate_trend():.2f}%"
+            )
+        
+        with col3:
+            st.metric(
+                "Throughput",
+                f"{latest_metrics.throughput:.0f}/s",
+                delta=f"{self._calculate_throughput_trend():.0f}/s"
+            )
+        
+        with col4:
+            st.metric(
+                "User Satisfaction", 
+                f"{latest_metrics.user_satisfaction:.1f}%",
+                delta=f"{self._calculate_satisfaction_trend():.1f}%"
+            )
+    
+    def _render_performance_charts(self):
+        """Рендер графиков производительности"""
+        st.header("📈 Performance Trends")
+        
+        if len(self.improvement_engine.metrics_history) < 2:
+            st.warning("Not enough data for charts")
+            return
+        
+        # Подготовка данных
+        df = self._prepare_metrics_dataframe()
+        
+        # График response time
+        fig1 = px.line(
+            df, x='timestamp', y='response_time',
+            title='Response Time Trend',
+            labels={'response_time': 'Response Time (ms)', 'timestamp': 'Time'}
+        )
+        st.plotly_chart(fig1, use_container_width=True)
+        
+        # График error rate и throughput
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig2 = px.line(
+                df, x='timestamp', y='error_rate',
+                title='Error Rate Trend',
+                labels={'error_rate': 'Error Rate (%)', 'timestamp': 'Time'}
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+        
+        with col2:
+            fig3 = px.line(
+                df, x='timestamp', y='throughput', 
+                title='Throughput Trend',
+                labels={'throughput': 'Requests/sec', 'timestamp': 'Time'}
+            )
+            st.plotly_chart(fig3, use_container_width=True)
+    
+    def _render_improvement_history(self):
+        """Рендер истории улучшений"""
+        st.header("🔄 Improvement History")
+        
+        if not self.improvement_engine.improvement_history:
+            st.info("No improvements applied yet")
+            return
+        
+        improvements_df = pd.DataFrame(self.improvement_engine.improvement_history)
+        
+        # Отображение последних улучшений
+        st.subheader("Recent Improvements")
+        for i, improvement in enumerate(self.improvement_engine.improvement_history[-5:]):
+            with st.expander(f"Improvement {i+1}: {improvement.get('strategy', 'Unknown')}"):
+                st.write(f"**Strategy:** {improvement.get('strategy', 'N/A')}")
+                st.write(f"**Success:** {improvement.get('success', False)}")
+                st.write(f"**Improvement:** {improvement.get('improvement_achieved', 0):.2%}")
+                st.write(f"**Duration:** {improvement.get('duration', 0):.2f}s")
+                
+                if 'parameters_optimized' in improvement:
+                    st.write("**Parameters Optimized:**")
+                    for param in improvement['parameters_optimized']:
+                        st.write(f"  - {param}")
+    
+    def _render_anomaly_detection(self):
+        """Рендер обнаружения аномалий"""
+        st.header("🚨 Anomaly Detection")
+        
+        # Здесь была бы реальная интеграция с anomaly detector
+        st.info("Anomaly detection is actively monitoring system metrics")
+        
+        # Создание synthetic данных для демонстрации
+        anomaly_data = pd.DataFrame({
+            'timestamp': pd.date_range('2024-01-01', periods=100, freq='H'),
+            'metric_value': np.concatenate([
+                np.random.normal(100, 10, 90),
+                np.random.normal(200, 20, 10)  # Аномалии
+            ]),
+            'is_anomaly': [False] * 90 + [True] * 10
+        })
+        
+        fig = px.scatter(
+            anomaly_data, x='timestamp', y='metric_value', color='is_anomaly',
+            title='Anomaly Detection Results',
+            labels={'metric_value': 'Metric Value', 'timestamp': 'Time', 'is_anomaly': 'Anomaly'}
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    def _prepare_metrics_dataframe(self) -> pd.DataFrame:
+        """Подготовка DataFrame с метриками"""
+        data = []
+        for metrics in self.improvement_engine.metrics_history[-100:]:  # Последние 100 записей
+            data.append({
+                'timestamp': metrics.timestamp,
+                'response_time': metrics.response_time,
+                'error_rate': metrics.error_rate,
+                'throughput': metrics.throughput,
+                'cpu_usage': metrics.cpu_usage,
+                'memory_usage': metrics.memory_usage,
+                'cache_hit_rate': metrics.cache_hit_rate,
+                'user_satisfaction': metrics.user_satisfaction
+            })
+        
+        return pd.DataFrame(data)
+    
+    def _calculate_response_time_trend(self) -> float:
+        """Расчет тренда response time"""
+        if len(self.improvement_engine.metrics_history) < 2:
+            return 0.0
+        
+        recent = self.improvement_engine.metrics_history[-10:]
+        values = [m.response_time for m in recent]
+        return values[-1] - values[0]
+    
+    def _calculate_error_rate_trend(self) -> float:
+        """Расчет тренда error rate"""
+        if len(self.improvement_engine.metrics_history) < 2:
+            return 0.0
+        
+        recent = self.improvement_engine.metrics_history[-10:]
+        values = [m.error_rate for m in recent]
+        return values[-1] - values[0]
+    
+    def _calculate_throughput_trend(self) -> float:
+        """Расчет тренда throughput"""
+        if len(self.improvement_engine.metrics_history) < 2:
+            return 0.0
+        
+        recent = self.improvement_engine.metrics_history[-10:]
+        values = [m.throughput for m in recent]
+        return values[-1] - values[0]
+    
+    def _calculate_satisfaction_trend(self) -> float:
+        """Расчет тренда satisfaction"""
+        if len(self.improvement_engine.metrics_history) < 2:
+            return 0.0
+        
+        recent = self.improvement_engine.metrics_history[-10:]
+        values = [m.user_satisfaction for m in recent]
+        return values[-1] - values[0]
+
+# Запуск dashboard
+def run_dashboard(improvement_engine: AutonomousImprovementEngine):
+    """Запуск dashboard"""
+    dashboard = SelfImprovementDashboard(improvement_engine)
+    dashboard.render_dashboard()
+
+if __name__ == "__main__":
+    # Для тестирования dashboard
+    engine = AutonomousImprovementEngine()
+    run_dashboard(engine)
