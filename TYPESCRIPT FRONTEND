@@ -1,0 +1,632 @@
+// core/OptimizedHealthService.ts
+interface OptimizedHealthMetric {
+  readonly userId: string;
+  readonly metricType: string;
+  readonly value: number;
+  readonly timestamp: number;
+  readonly source: string;
+  readonly confidence: number;
+}
+
+interface HealthScore {
+  readonly overall: number;
+  readonly physical: number;
+  readonly mental: number;
+  readonly nutritional: number;
+  readonly sleep: number;
+  readonly trend: number;
+}
+
+interface CacheConfig {
+  readonly ttl: number;
+  readonly maxSize: number;
+  readonly strategy: 'lru' | 'fifo';
+}
+
+class OptimizedHealthService {
+  private readonly cache: Map<string, { data: HealthScore; timestamp: number }> = new Map();
+  private readonly batchQueue: OptimizedHealthMetric[] = [];
+  private readonly calculationCache = new Map<string, number>();
+  private readonly performanceMonitor: PerformanceMonitor;
+  
+  private readonly BATCH_SIZE = 200;
+  private readonly DEBOUNCE_DELAY = 50; // ms
+  private processingTimeout: NodeJS.Timeout | null = null;
+  private isProcessing: boolean = false;
+
+  constructor(
+    private readonly apiBaseUrl: string,
+    private readonly cacheConfig: CacheConfig
+  ) {
+    this.performanceMonitor = new PerformanceMonitor();
+    this.startCacheCleanup();
+  }
+
+  // Оптимизированная батч-обработка
+  public async queueHealthMetric(metric: OptimizedHealthMetric): Promise<void> {
+    this.batchQueue.push(metric);
+
+    if (this.batchQueue.length >= this.BATCH_SIZE) {
+      await this.processBatchImmediate();
+    } else {
+      this.scheduleBatchProcessing();
+    }
+  }
+
+  private scheduleBatchProcessing(): void {
+    if (this.processingTimeout) {
+      clearTimeout(this.processingTimeout);
+    }
+
+    this.processingTimeout = setTimeout(() => {
+      this.processBatchImmediate();
+    }, this.DEBOUNCE_DELAY);
+  }
+
+  private async processBatchImmediate(): Promise<void> {
+    if (this.isProcessing || this.batchQueue.length === 0) return;
+
+    this.isProcessing = true;
+    const batch = this.batchQueue.splice(0, this.BATCH_SIZE);
+
+    try {
+      const startTime = performance.now();
+      
+      const response = await this.fetchWithRetry(`${this.apiBaseUrl}/health/batch-process`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(batch),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      const processingTime = performance.now() - startTime;
+
+      // Обновление кэша
+      this.updateCache(result.scores);
+
+      this.performanceMonitor.recordProcessingTime(processingTime);
+      this.performanceMonitor.recordBatchSize(batch.length);
+
+    } catch (error) {
+      console.error('Batch processing failed:', error);
+      // Возврат в очередь при ошибке
+      this.batchQueue.unshift(...batch);
+    } finally {
+      this.isProcessing = false;
+    }
+  }
+
+  // Оптимизированные вычисления на стороне клиента
+  public calculateHealthScore(metrics: OptimizedHealthMetric[]): HealthScore {
+    const cacheKey = this.generateCacheKey(metrics);
+    
+    const cached = this.calculationCache.get(cacheKey);
+    if (cached !== undefined) {
+      return this.deserializeHealthScore(cached);
+    }
+
+    const score = this.computeHealthScoreOptimized(metrics);
+    const serialized = this.serializeHealthScore(score);
+    
+    this.calculationCache.set(cacheKey, serialized);
+    this.cleanCalculationCache();
+
+    return score;
+  }
+
+  private computeHealthScoreOptimized(metrics: OptimizedHealthMetric[]): HealthScore {
+    // Использование TypedArrays для производительности
+    const physicalMetrics = this.filterMetrics(metrics, ['steps', 'heart_rate', 'activity']);
+    const mentalMetrics = this.filterMetrics(metrics, ['stress', 'mood']);
+    const nutritionMetrics = this.filterMetrics(metrics, ['calories', 'nutrients']);
+    const sleepMetrics = this.filterMetrics(metrics, ['sleep_duration', 'sleep_quality']);
+
+    const physicalScore = this.calculateComponentScoreOptimized(physicalMetrics);
+    const mentalScore = this.calculateComponentScoreOptimized(mentalMetrics, true);
+    const nutritionScore = this.calculateComponentScoreOptimized(nutritionMetrics);
+    const sleepScore = this.calculateComponentScoreOptimized(sleepMetrics);
+
+    const weights = new Float32Array([0.3, 0.3, 0.2, 0.2]);
+    const scores = new Float32Array([physicalScore, mentalScore, nutritionScore, sleepScore]);
+    
+    let overall = 0;
+    for (let i = 0; i < weights.length; i++) {
+      overall += weights[i] * scores[i];
+    }
+
+    const trend = this.calculateTrendOptimized(metrics);
+
+    return {
+      overall: Number(overall.toFixed(4)),
+      physical: Number(physicalScore.toFixed(4)),
+      mental: Number(mentalScore.toFixed(4)),
+      nutritional: Number(nutritionScore.toFixed(4)),
+      sleep: Number(sleepScore.toFixed(4)),
+      trend: Number(trend.toFixed(4))
+    };
+  }
+
+  private calculateComponentScoreOptimized(
+    metrics: OptimizedHealthMetric[], 
+    invert: boolean = false
+  ): number {
+    if (metrics.length === 0) return 0;
+
+    const values = new Float32Array(metrics.map(m => m.value));
+    const confidences = new Float32Array(metrics.map(m => m.confidence));
+
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+
+    if (max === min) return 1;
+
+    let totalWeighted = 0;
+    let totalConfidence = 0;
+
+    for (let i = 0; i < values.length; i++) {
+      const normalized = (values[i] - min) / (max - min);
+      const adjustedValue = invert ? 1 - normalized : normalized;
+      const weighted = adjustedValue * confidences[i];
+      
+      totalWeighted += weighted;
+      totalConfidence += confidences[i];
+    }
+
+    return totalConfidence > 0 ? totalWeighted / totalConfidence : 0;
+  }
+
+  private calculateTrendOptimized(metrics: OptimizedHealthMetric[]): number {
+    if (metrics.length < 2) return 0;
+
+    // Группировка по времени для анализа тренда
+    const timeGroups = this.groupByTime(metrics);
+    const scores = timeGroups.map(group => 
+      this.calculateComponentScoreOptimized(group)
+    );
+
+    if (scores.length < 2) return 0;
+
+    // Простой расчет тренда
+    const first = scores[0];
+    const last = scores[scores.length - 1];
+    
+    return (last - first) / scores.length;
+  }
+
+  // Оптимизированные утилиты
+  private filterMetrics(metrics: OptimizedHealthMetric[], types: string[]): OptimizedHealthMetric[] {
+    const result: OptimizedHealthMetric[] = [];
+    for (const metric of metrics) {
+      if (types.includes(metric.metricType)) {
+        result.push(metric);
+      }
+    }
+    return result;
+  }
+
+  private groupByTime(metrics: OptimizedHealthMetric[]): OptimizedHealthMetric[][] {
+    const groups: Map<number, OptimizedHealthMetric[]> = new Map();
+    
+    for (const metric of metrics) {
+      const timeGroup = Math.floor(metric.timestamp / (60 * 60 * 1000)); // Группировка по часам
+      if (!groups.has(timeGroup)) {
+        groups.set(timeGroup, []);
+      }
+      groups.get(timeGroup)!.push(metric);
+    }
+    
+    return Array.from(groups.values());
+  }
+
+  private generateCacheKey(metrics: OptimizedHealthMetric[]): string {
+    // Быстрый хэш для кэширования
+    let hash = 0;
+    for (const metric of metrics) {
+      for (let i = 0; i < metric.userId.length; i++) {
+        hash = ((hash << 5) - hash) + metric.userId.charCodeAt(i);
+        hash |= 0; // Convert to 32bit integer
+      }
+      hash = ((hash << 5) - hash) + metric.timestamp;
+      hash |= 0;
+    }
+    return hash.toString();
+  }
+
+  private serializeHealthScore(score: HealthScore): number {
+    // Эффективная сериализация для кэша
+    return (
+      score.overall * 1000000 +
+      score.physical * 1000 +
+      score.mental
+    );
+  }
+
+  private deserializeHealthScore(serialized: number): HealthScore {
+    const overall = Math.floor(serialized / 1000000) / 100;
+    const physical = Math.floor((serialized % 1000000) / 1000) / 100;
+    const mental = (serialized % 1000) / 100;
+
+    return {
+      overall,
+      physical,
+      mental,
+      nutritional: overall,
+      sleep: overall,
+      trend: 0
+    };
+  }
+
+  private cleanCalculationCache(): void {
+    if (this.calculationCache.size > this.cacheConfig.maxSize) {
+      const firstKey = this.calculationCache.keys().next().value;
+      this.calculationCache.delete(firstKey);
+    }
+  }
+
+  private async fetchWithRetry(url: string, options: RequestInit, retries = 3): Promise<Response> {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const response = await fetch(url, options);
+        if (response.ok) return response;
+        
+        if (response.status >= 500) {
+          // Retry on server errors
+          await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+          continue;
+        }
+        
+        throw new Error(`HTTP ${response.status}`);
+      } catch (error) {
+        if (i === retries - 1) throw error;
+        await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+      }
+    }
+    
+    throw new Error('All retry attempts failed');
+  }
+
+  private updateCache(scores: Record<string, HealthScore>): void {
+    const now = Date.now();
+    for (const [userId, score] of Object.entries(scores)) {
+      this.cache.set(userId, { data: score, timestamp: now });
+    }
+    this.cleanCache();
+  }
+
+  private cleanCache(): void {
+    const now = Date.now();
+    for (const [key, value] of this.cache.entries()) {
+      if (now - value.timestamp > this.cacheConfig.ttl) {
+        this.cache.delete(key);
+      }
+    }
+  }
+
+  private startCacheCleanup(): void {
+    setInterval(() => {
+      this.cleanCache();
+      this.cleanCalculationCache();
+    }, 60000); // Каждую минуту
+  }
+}
+
+// Оптимизированный Performance Monitor
+class PerformanceMonitor {
+  private processingTimes: number[] = [];
+  private batchSizes: number[] = [];
+  private readonly maxSamples = 100;
+
+  recordProcessingTime(time: number): void {
+    this.processingTimes.push(time);
+    if (this.processingTimes.length > this.maxSamples) {
+      this.processingTimes.shift();
+    }
+  }
+
+  recordBatchSize(size: number): void {
+    this.batchSizes.push(size);
+    if (this.batchSizes.length > this.maxSamples) {
+      this.batchSizes.shift();
+    }
+  }
+
+  getStats(): { avgProcessingTime: number; avgBatchSize: number; efficiency: number } {
+    const avgProcessingTime = this.processingTimes.length > 0 
+      ? this.processingTimes.reduce((a, b) => a + b, 0) / this.processingTimes.length
+      : 0;
+    
+    const avgBatchSize = this.batchSizes.length > 0
+      ? this.batchSizes.reduce((a, b) => a + b, 0) / this.batchSizes.length
+      : 0;
+
+    const efficiency = avgBatchSize > 0 ? avgBatchSize / avgProcessingTime : 0;
+
+    return {
+      avgProcessingTime: Number(avgProcessingTime.toFixed(2)),
+      avgBatchSize: Number(avgBatchSize.toFixed(2)),
+      efficiency: Number(efficiency.toFixed(2))
+    };
+  }
+}
+
+// React hooks с оптимизацией
+import React, { memo, useMemo, useState, useEffect, useCallback, useRef } from 'react';
+
+interface UseHealthDataConfig {
+  readonly enableCache: boolean;
+  readonly realTimeUpdates: boolean;
+  readonly optimizationLevel: 'low' | 'medium' | 'high';
+}
+
+export const useOptimizedHealthData = (
+  userId: string, 
+  config: UseHealthDataConfig = { 
+    enableCache: true, 
+    realTimeUpdates: true, 
+    optimizationLevel: 'high' 
+  }
+) => {
+  const [data, setData] = useState<OptimizedHealthMetric[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const healthServiceRef = useRef<OptimizedHealthService | null>(null);
+
+  const getHealthService = useCallback((): OptimizedHealthService => {
+    if (!healthServiceRef.current) {
+      healthServiceRef.current = new OptimizedHealthService(
+        process.env.REACT_APP_API_URL!,
+        { ttl: 5 * 60 * 1000, maxSize: 1000, strategy: 'lru' }
+      );
+    }
+    return healthServiceRef.current;
+  }, []);
+
+  // Мемоизированные вычисления
+  const healthScore = useMemo(() => {
+    if (data.length === 0) return null;
+    return getHealthService().calculateHealthScore(data);
+  }, [data, getHealthService]);
+
+  const recentMetrics = useMemo(() => {
+    return data
+      .filter(metric => metric.timestamp > Date.now() - 24 * 60 * 60 * 1000) // Последние 24 часа
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 100);
+  }, [data]);
+
+  const metricsByType = useMemo(() => {
+    const grouped: Record<string, OptimizedHealthMetric[]> = {};
+    for (const metric of data) {
+      if (!grouped[metric.metricType]) {
+        grouped[metric.metricType] = [];
+      }
+      grouped[metric.metricType].push(metric);
+    }
+    return grouped;
+  }, [data]);
+
+  // Оптимизированная загрузка данных
+  useEffect(() => {
+    if (!userId) return;
+
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        // Здесь был бы реальный API call
+        // const response = await getHealthService().getUserHealthData(userId);
+        // setData(response.data);
+        
+        // Заглушка для демонстрации
+        await new Promise(resolve => setTimeout(resolve, 100));
+        setData([]);
+        
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'An error occurred');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [userId, getHealthService]);
+
+  const addHealthMetric = useCallback(async (metric: Omit<OptimizedHealthMetric, 'userId'>) => {
+    const newMetric: OptimizedHealthMetric = {
+      ...metric,
+      userId
+    };
+
+    try {
+      await getHealthService().queueHealthMetric(newMetric);
+      setData(prev => [newMetric, ...prev].slice(0, 1000)); // Ограничение истории
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add health metric');
+      throw err;
+    }
+  }, [userId, getHealthService]);
+
+  return useMemo(() => ({
+    data,
+    healthScore,
+    recentMetrics,
+    metricsByType,
+    loading,
+    error,
+    addHealthMetric
+  }), [data, healthScore, recentMetrics, metricsByType, loading, error, addHealthMetric]);
+};
+
+// Оптимизированные React компоненты
+interface HealthDashboardProps {
+  readonly userId: string;
+  readonly optimization?: boolean;
+}
+
+const OptimizedHealthDashboard: React.FC<HealthDashboardProps> = memo(({
+  userId,
+  optimization = true
+}) => {
+  const { 
+    healthScore, 
+    recentMetrics, 
+    metricsByType, 
+    loading, 
+    error,
+    addHealthMetric 
+  } = useOptimizedHealthData(userId, {
+    enableCache: optimization,
+    realTimeUpdates: optimization,
+    optimizationLevel: optimization ? 'high' : 'low'
+  });
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+        <div className="text-red-800 font-semibold">Error</div>
+        <div className="text-red-600">{error}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="health-dashboard space-y-6">
+      <HealthScoreDisplay score={healthScore} />
+      <MetricsGrid metrics={recentMetrics} />
+      <MetricDistribution distribution={metricsByType} />
+      <PerformanceStats />
+    </div>
+  );
+});
+
+const HealthScoreDisplay: React.FC<{ score: HealthScore | null }> = memo(({ score }) => {
+  if (!score) return null;
+
+  return (
+    <div className="bg-white rounded-xl shadow-lg p-6">
+      <h2 className="text-2xl font-bold text-gray-800 mb-4">Health Score</h2>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <MetricValue label="Overall" value={score.overall} trend={score.trend} />
+        <MetricValue label="Physical" value={score.physical} />
+        <MetricValue label="Mental" value={score.mental} />
+        <MetricValue label="Nutrition" value={score.nutritional} />
+        <MetricValue label="Sleep" value={score.sleep} />
+        <TrendIndicator trend={score.trend} />
+      </div>
+    </div>
+  );
+});
+
+const MetricValue: React.FC<{ label: string; value: number; trend?: number }> = memo(({ 
+  label, 
+  value, 
+  trend 
+}) => {
+  const getColorClass = (value: number) => {
+    if (value >= 80) return 'text-green-600';
+    if (value >= 60) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
+  return (
+    <div className="text-center">
+      <div className="text-sm text-gray-600 mb-1">{label}</div>
+      <div className={`text-2xl font-bold ${getColorClass(value)}`}>
+        {value.toFixed(1)}
+      </div>
+      {trend !== undefined && (
+        <div className={`text-xs ${trend >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+          {trend >= 0 ? '↗' : '↘'} {Math.abs(trend).toFixed(2)}
+        </div>
+      )}
+    </div>
+  );
+});
+
+const MetricsGrid: React.FC<{ metrics: OptimizedHealthMetric[] }> = memo(({ metrics }) => {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {metrics.slice(0, 6).map((metric, index) => (
+        <MetricCard key={`${metric.metricType}-${metric.timestamp}-${index}`} metric={metric} />
+      ))}
+    </div>
+  );
+});
+
+const MetricCard: React.FC<{ metric: OptimizedHealthMetric }> = memo(({ metric }) => {
+  return (
+    <div className="bg-white rounded-lg shadow p-4 border-l-4 border-blue-500">
+      <div className="flex justify-between items-start">
+        <div>
+          <h3 className="font-semibold text-gray-800 capitalize">
+            {metric.metricType.replace('_', ' ')}
+          </h3>
+          <p className="text-2xl font-bold text-gray-900">{metric.value}</p>
+        </div>
+        <div className="text-xs text-gray-500">
+          {new Date(metric.timestamp).toLocaleTimeString()}
+        </div>
+      </div>
+      <div className="mt-2 text-xs text-gray-600">
+        Confidence: {(metric.confidence * 100).toFixed(0)}%
+      </div>
+    </div>
+  );
+});
+
+// Компонент для отображения статистики производительности
+const PerformanceStats: React.FC = memo(() => {
+  const [stats, setStats] = useState<{ avgProcessingTime: number; avgBatchSize: number; efficiency: number }>({
+    avgProcessingTime: 0,
+    avgBatchSize: 0,
+    efficiency: 0
+  });
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // В реальном приложении здесь были бы реальные метрики
+      setStats({
+        avgProcessingTime: Math.random() * 100,
+        avgBatchSize: Math.random() * 200,
+        efficiency: Math.random() * 10
+      });
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="bg-gray-50 rounded-lg p-4">
+      <h3 className="font-semibold text-gray-700 mb-2">Performance Stats</h3>
+      <div className="grid grid-cols-3 gap-4 text-sm">
+        <div>
+          <div className="text-gray-600">Avg Process Time</div>
+          <div className="font-mono">{stats.avgProcessingTime.toFixed(2)}ms</div>
+        </div>
+        <div>
+          <div className="text-gray-600">Avg Batch Size</div>
+          <div className="font-mono">{stats.avgBatchSize.toFixed(0)}</div>
+        </div>
+        <div>
+          <div className="text-gray-600">Efficiency</div>
+          <div className="font-mono">{stats.efficiency.toFixed(2)}</div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+export default OptimizedHealthDashboard;
